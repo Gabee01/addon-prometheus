@@ -6,49 +6,47 @@ import os
 import tempfile
 import requests
 
-from yamlinclude import YamlIncludeConstructor
+from yaml_include import Constructor as YamlIncludeConstructor
 
 
 def generateConfig():
-    YamlIncludeConstructor.add_to_loader_class(
-        loader_class=yaml.FullLoader, base_dir="/share/prometheus/"
-    )
+    loader = yaml.SafeLoader
+    yaml_include_constructor = YamlIncludeConstructor(base_dir="/share/prometheus/")
+    yaml.add_constructor("!include", yaml_include_constructor, loader)
 
-    with open("prometheus.template") as f:
-        data = yaml.load(f, Loader=yaml.FullLoader)
+    with open("prometheus.template", "r") as f:
+        data = yaml.load(f, Loader=loader)
 
     data["scrape_configs"] = (
-        data[".scrape_configs_static"] + data[".scrape_configs_included"]
+        data.get(".scrape_configs_static", []) + data.get(".scrape_configs_included", [])
     )
-    del data[".scrape_configs_static"]
-    del data[".scrape_configs_included"]
-    return yaml.dump(data, default_flow_style=False, default_style="")
+    data.pop(".scrape_configs_static", None)
+    data.pop(".scrape_configs_included", None)
+    return yaml.dump(data, default_flow_style=False)
 
 
 def testConfig(config):
-    tmp = None
-    result = False
     try:
-        tmp = tempfile.NamedTemporaryFile()
-        with open(tmp.name, "w") as f:
-            f.write(config)
-        r = os.system("promtool check config " + tmp.name + "> /dev/null")
-        result = r == 0
-    except:
-        print("Failed to validate")
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+            tmp.write(config)
+            tmp_name = tmp.name
+        result = os.system(f"promtool check config {tmp_name} > /dev/null") == 0
+        os.unlink(tmp_name)
+        if not result:
+            raise Exception("validation error")
+        return result
+    except Exception as e:
+        print(f"Failed to validate: {str(e)}")
         raise
-    if not result:
-        raise Exception("validation error")
-    return result
 
 
 def writeConfig(config, file):
     try:
         with open(file, "w") as f:
             f.write(config)
-        r = requests.post(url="http://localhost:9090/-/reload", data={})
-    except:
-        print("Exception")
+        requests.post(url="http://localhost:9090/-/reload")
+    except Exception as e:
+        print(f"Exception: {str(e)}")
 
 
 loop = asyncio.get_event_loop()
@@ -58,42 +56,42 @@ lock = asyncio.Lock()
 
 
 async def compile():
-    if lock.locked() == False:
-        await lock.acquire()
+    async with lock:
         try:
             config = generateConfig()
             testConfig(config)
             writeConfig(config, "/etc/prometheus/prometheus.yml")
             print("Compiled")
-        except:
-            pass
-        finally:
-            lock.release()
+        except Exception as e:
+            print(f"Compilation error: {str(e)}")
 
 
 async def watcher():
-    asyncio.create_task(compile())
+    await compile()
     filewatch = aionotify.Watcher()
     for path in paths_to_watch:
         filewatch.watch(
             path,
             aionotify.Flags.MODIFY | aionotify.Flags.CREATE | aionotify.Flags.DELETE,
         )
-        print(path)
+        print(f"Watching: {path}")
     await filewatch.setup(loop)
-    while True:
-        event = await filewatch.get_event()
-        sys.stdout.write("Got event: %s\n" % repr(event))
-        asyncio.create_task(compile())
-    filewatch.close()
+    try:
+        while True:
+            event = await filewatch.get_event()
+            print(f"Got event: {event}")
+            await compile()
+    finally:
+        filewatch.close()
 
 
 def main():
     try:
         loop.run_until_complete(watcher())
+    except KeyboardInterrupt:
+        print("Watcher stopped")
     finally:
-        # loop.close()
-        pass
+        loop.close()
 
 
 if __name__ == "__main__":

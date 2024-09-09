@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:12.2.6
+ARG BUILD_FROM=ghcr.io/hassio-addons/base:13.2.2
 # hadolint ignore=DL3006
 FROM ${BUILD_FROM}
 
@@ -7,10 +7,18 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Setup base system
 ARG BUILD_ARCH=amd64
-ENV PROMETHEUS_VERSION=2.40.1
+ENV PROMETHEUS_VERSION=2.47.1
 
 # Copy root filesystem
 COPY rootfs /
+
+# Create prometheus user first
+RUN adduser -s /bin/false -D -H prometheus
+
+# Create data directory and set permissions
+RUN mkdir -p /data/prometheus && \
+    chown -R prometheus:prometheus /data/prometheus && \
+    chmod 755 /data/prometheus
 
 # hadolint ignore=DL3003
 RUN \
@@ -18,19 +26,18 @@ RUN \
     && if [ "${BUILD_ARCH}" = "aarch64" ]; then ARCH="arm64"; fi \
     \
     && apk --no-cache add \
-        python3=3.10.5-r0 \
-        py3-idna=3.3-r2 \
-        py3-certifi=2021.10.8-r0 \
-        py3-chardet=4.0.0-r3 \
-        py3-yaml=6.0-r0 \
-        py3-urllib3=1.26.9-r0 \
-        py3-requests=2.27.1-r0 \
+        python3 \
+        py3-idna \
+        py3-certifi \
+        py3-chardet \
+        py3-yaml \
+        py3-urllib3 \
+        py3-requests \
     && apk --no-cache add --virtual .builddeps \
-        py-pip=22.1.1-r0 \
+        py3-pip \
     \
     && curl -J -L -o /tmp/prometheus.tar.gz \
         "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-${ARCH}.tar.gz" \
-    && adduser -s /bin/false -D -H prometheus \
     && cd /tmp \
     && tar -xvf /tmp/prometheus.tar.gz \
     && mkdir -p /etc/prometheus \
@@ -45,7 +52,6 @@ RUN \
         --prefer-binary \
         --find-links "https://wheels.home-assistant.io/alpine-3.15/${BUILD_ARCH}/" \
         -r /opt/prometheus-configgen/requirements.txt \
-    \
     && apk --no-cache del .builddeps \
     && rm -f -r \
         /tmp/*
