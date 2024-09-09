@@ -6,5 +6,7 @@
 echo "${SUPERVISOR_TOKEN}" > '/run/home-assistant.token'
 
 mkdir -p /data/prometheus
-find /data/prometheus -not -perm 0644 -type f -exec chmod 0660 {} \;
-find /data/prometheus -not -perm 0755 -type d -exec chmod 0770 {} \;
+chown -R prometheus:prometheus /data/prometheus
+chmod 755 /data/prometheus
+find /data/prometheus -type f -exec chmod 644 {} \;
+find /data/prometheus -type d -exec chmod 755 {} \;
